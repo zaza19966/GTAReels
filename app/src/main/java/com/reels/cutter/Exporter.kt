@@ -28,7 +28,7 @@ class Exporter(private val ctx: Context) {
         cropPos: Float, // 0..1 موضع الاقتصاص أفقيًا
         onClipStart: (Int) -> Unit,
         onDone: (List<Uri>) -> Unit,
-        onError: (String) -> Unit
+        onFail: (String) -> Unit
     ) {
         val results = mutableListOf<Uri>()
         val stamp = System.currentTimeMillis()
@@ -74,7 +74,7 @@ class Exporter(private val ctx: Context) {
                         exportException: ExportException
                     ) {
                         outFile.delete()
-                        onError(exportException.message ?: "فشل التصدير")
+                        onFail(exportException.message ?: "فشل التصدير")
                     }
                 })
                 .build()

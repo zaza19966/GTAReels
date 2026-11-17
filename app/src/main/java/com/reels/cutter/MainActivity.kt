@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
         root.addView(button("1) اختيار الفيديو") { picker.launch(arrayOf("video/*")) })
         root.addView(fileLabel)
 
+        // طول المقطع
         root.addView(label("طول الريلز", 15f, true))
         val rg = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
         listOf(15, 30, 45, 60).forEach { s ->
@@ -106,10 +107,11 @@ class MainActivity : ComponentActivity() {
         }
         root.addView(rg)
 
+        // عدد المقاطع
         countLabel = label("عدد الريلز: 5", 15f, true)
-        root.addView(countLabel)        countBar = SeekBar(this).apply {
-            max = 9
-            progress = 4
+        root.addView(countLabel)
+        countBar = SeekBar(this).apply {
+            max = 9; progress = 4
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, u: Boolean) {
                     countLabel.text = "عدد الريلز: ${p + 1}"
@@ -120,10 +122,12 @@ class MainActivity : ComponentActivity() {
         }
         root.addView(countBar)
 
+        // موضع الاقتصاص
         root.addView(label("موضع الاقتصاص الأفقي (يسار ← يمين)", 15f, true))
         cropBar = SeekBar(this).apply { max = 100; progress = 50 }
         root.addView(cropBar)
 
+        // البحث بالنص على الشاشة
         root.addView(label("بحث عن كلمات تظهر على الشاشة", 15f, true))
         keywordsEt = EditText(this).apply {
             hint = "WASTED, BUSTED, MISSION PASSED"
@@ -145,6 +149,7 @@ class MainActivity : ComponentActivity() {
         momentsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(momentsBox)
 
+        // إضافة لحظة يدويًا
         root.addView(label("إضافة لحظة يدويًا (مثال 12:45)", 15f, true))
         val manualRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         manualEt = EditText(this).apply {
@@ -167,16 +172,9 @@ class MainActivity : ComponentActivity() {
     private fun onVideoPicked(uri: Uri) {
         try {
             val (d, w, h) = Analyzer.info(this, uri)
-            videoUri = uri
-            durationMs = d
-            vw = w
-            vh = h
-            cachedUri = null
-            audio = null
-            motion = null
-            moments.clear()
-            exported.clear()
-            momentsBox.removeAllViews()
+            videoUri = uri; durationMs = d; vw = w; vh = h
+            cachedUri = null; audio = null; motion = null
+            moments.clear(); exported.clear(); momentsBox.removeAllViews()
             fileLabel.text = "المدة: ${fmt(d)}  |  الدقة: ${w}x$h"
             status.text = ""
         } catch (e: Exception) {
@@ -193,3 +191,132 @@ class MainActivity : ComponentActivity() {
 
     private fun updateProgress(p: Int) = runOnUiThread { progress.progress = p }
     private fun updateStatus(s: String) = runOnUiThread { status.text = s }
+
+    private fun analyze() {
+        val uri = videoUri ?: run { Toast.makeText(this, "اختر فيديو أولًا", Toast.LENGTH_SHORT).show(); return }
+        setBusy(true)
+        lifecycleScope.launch {
+            try {
+                val bins = (durationMs / BIN_MS).toInt() + 1
+                if (cachedUri != uri) {
+                    updateStatus("تحليل الصوت...")
+                    audio = Analyzer.audioBins(this@MainActivity, uri, bins) { updateProgress(it) }
+                    updateStatus("تحليل الحركة...")
+                    motion = Analyzer.motionBins(this@MainActivity, uri, bins) { updateProgress(it) }
+                    cachedUri = uri; ocrKey = ""; ocrHits = emptyMap()
+                }
+                val kws = keywordsEt.text.toString().split(",", "،")
+                    .map { it.trim().uppercase() }.filter { it.isNotEmpty() }
+                val key = if (ocrCb.isChecked) kws.joinToString("|") else ""
+                if (key != ocrKey) {
+                    ocrHits = if (key.isEmpty()) emptyMap() else {
+                        updateStatus("البحث عن النصوص على الشاشة...")
+                        Analyzer.ocrHits(this@MainActivity, uri, bins, kws) { updateProgress(it) }
+                    }
+                    ocrKey = key
+                }
+                moments.clear()
+                moments.addAll(
+                    Analyzer.pick(
+                        audio ?: FloatArray(bins), motion ?: FloatArray(bins), ocrHits,
+                        countBar.progress + 1, lengthSec * 1000L
+                    )
+                )
+                render()
+                updateProgress(100)
+                status.text = "تم العثور على ${moments.size} لحظة. راجعها ثم صدّر."
+            } catch (e: Exception) {
+                status.text = "خطأ: ${e.message}"
+            } finally {
+                setBusy(false)
+            }
+        }
+    }
+
+    private fun render() {
+        momentsBox.removeAllViews()
+        for (m in moments) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            row.addView(CheckBox(this).apply {
+                text = "${fmt(m.timeMs)} — ${m.score.toInt()}%\n${m.reason}"
+                isChecked = m.selected
+                setOnCheckedChangeListener { _, c -> m.selected = c }
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            row.addView(button("معاينة") { preview(m) })
+            momentsBox.addView(row)
+        }
+    }
+
+    private fun addManual() {
+        val t = parseTime(manualEt.text.toString())
+        if (t == null || videoUri == null || t > durationMs) {
+            Toast.makeText(this, "وقت غير صالح", Toast.LENGTH_SHORT).show(); return
+        }
+        moments.add(Moment(t, 100f, "لحظة أضفتها يدويًا"))
+        moments.sortBy { it.timeMs }
+        render()
+        manualEt.setText("")
+    }
+
+    private fun preview(m: Moment) {
+        val uri = videoUri ?: return
+        val (s, e) = Analyzer.window(m.timeMs, lengthSec * 1000L, durationMs)
+        val v = VideoView(this)
+        v.setVideoURI(uri)
+        val h = Handler(Looper.getMainLooper())
+        val check = object : Runnable {
+            override fun run() {
+                if (v.currentPosition >= e) v.pause() else h.postDelayed(this, 300)
+            }
+        }
+        v.setOnPreparedListener { v.seekTo(s.toInt()); v.start(); h.postDelayed(check, 300) }
+        val d = AlertDialog.Builder(this).setView(v).setPositiveButton("إغلاق", null).create()
+        d.setOnDismissListener { h.removeCallbacks(check); v.stopPlayback() }
+        d.show()
+    }
+
+    private fun doExport() {
+        val uri = videoUri ?: return
+        val sel = moments.filter { it.selected }
+        if (sel.isEmpty()) { Toast.makeText(this, "حدّد لحظة واحدة على الأقل", Toast.LENGTH_SHORT).show(); return }
+        val clips = sel.map { Analyzer.window(it.timeMs, lengthSec * 1000L, durationMs) }
+        exported.clear()
+        setBusy(true)
+        progress.progress = 0
+        Exporter(this).export(
+            uri, clips, vw, vh, cropBar.progress / 100f,
+            onClipStart = { i ->
+                status.text = "جاري تصدير الريلز ${i + 1} من ${clips.size}..."
+                progress.progress = i * 100 / clips.size
+            },
+            onDone = { list ->
+                exported.addAll(list)
+                progress.progress = 100
+                status.text = "تم تصدير ${list.size} ريلز إلى Movies/GTAReels ✅"
+                setBusy(false)
+            },
+            onFail = { msg ->
+                status.text = "فشل التصدير: $msg"
+                setBusy(false)
+            }
+        )
+    }
+
+    private fun share() {
+        if (exported.isEmpty()) { Toast.makeText(this, "صدّر الريلز أولًا", Toast.LENGTH_SHORT).show(); return }
+        val i = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "video/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(exported))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(i, "مشاركة الريلز"))
+    }
+
+    private fun copyCaption() {
+        val text = "🔥 أقوى لحظات GTA 6! #GTA6 #GTAVI #Gaming #Reels #Shorts #fyp"
+        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+            .setPrimaryClip(ClipData.newPlainText("caption", text))
+        Toast.makeText(this, "تم النسخ", Toast.LENGTH_SHORT).show()
+    }
+}
