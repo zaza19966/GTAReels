@@ -107,4 +107,89 @@ class MainActivity : ComponentActivity() {
         root.addView(rg)
 
         countLabel = label("عدد الريلز: 5", 15f, true)
-        root.addView(countLabel)
+        root.addView(countLabel)        countBar = SeekBar(this).apply {
+            max = 9
+            progress = 4
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, u: Boolean) {
+                    countLabel.text = "عدد الريلز: ${p + 1}"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+        root.addView(countBar)
+
+        root.addView(label("موضع الاقتصاص الأفقي (يسار ← يمين)", 15f, true))
+        cropBar = SeekBar(this).apply { max = 100; progress = 50 }
+        root.addView(cropBar)
+
+        root.addView(label("بحث عن كلمات تظهر على الشاشة", 15f, true))
+        keywordsEt = EditText(this).apply {
+            hint = "WASTED, BUSTED, MISSION PASSED"
+            setText("WASTED, BUSTED, MISSION PASSED")
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+        }
+        root.addView(keywordsEt)
+        ocrCb = CheckBox(this).apply { text = "تفعيل البحث بالنص (أبطأ لكن أدق)" }
+        root.addView(ocrCb)
+
+        analyzeBtn = button("2) تحليل الفيديو وإيجاد اللحظات") { analyze() }
+        root.addView(analyzeBtn)
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        root.addView(progress)
+        status = label("")
+        root.addView(status)
+
+        root.addView(label("اللحظات المقترحة", 17f, true))
+        momentsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(momentsBox)
+
+        root.addView(label("إضافة لحظة يدويًا (مثال 12:45)", 15f, true))
+        val manualRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        manualEt = EditText(this).apply {
+            hint = "mm:ss"
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        manualRow.addView(manualEt)
+        manualRow.addView(button("إضافة") { addManual() })
+        root.addView(manualRow)
+
+        exportBtn = button("3) تصدير الريلز المحددة") { doExport() }
+        root.addView(exportBtn)
+        shareBtn = button("4) مشاركة الريلز (انستغرام / تيك توك / يوتيوب...)") { share() }
+        root.addView(shareBtn)
+        root.addView(button("نسخ وصف + هاشتاغات") { copyCaption() })
+        root.addView(label("تُحفظ الريلز في: Movies/GTAReels"))
+    }
+
+    private fun onVideoPicked(uri: Uri) {
+        try {
+            val (d, w, h) = Analyzer.info(this, uri)
+            videoUri = uri
+            durationMs = d
+            vw = w
+            vh = h
+            cachedUri = null
+            audio = null
+            motion = null
+            moments.clear()
+            exported.clear()
+            momentsBox.removeAllViews()
+            fileLabel.text = "المدة: ${fmt(d)}  |  الدقة: ${w}x$h"
+            status.text = ""
+        } catch (e: Exception) {
+            Toast.makeText(this, "تعذّر فتح الفيديو: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun setBusy(b: Boolean) {
+        analyzeBtn.isEnabled = !b
+        exportBtn.isEnabled = !b
+        if (b) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun updateProgress(p: Int) = runOnUiThread { progress.progress = p }
+    private fun updateStatus(s: String) = runOnUiThread { status.text = s }
