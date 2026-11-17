@@ -10,6 +10,8 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.effect.Crop
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultEncoderFactory
+import androidx.media3.transformer.VideoEncoderSettings
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
@@ -26,6 +28,7 @@ class Exporter(private val ctx: Context) {
         videoW: Int,
         videoH: Int,
         cropPos: Float, // 0..1 موضع الاقتصاص أفقيًا
+        keepOriginal: Boolean, // true = بدون تكبير
         onClipStart: (Int) -> Unit,
         onDone: (List<Uri>) -> Unit,
         onFail: (String) -> Unit
@@ -47,12 +50,26 @@ class Exporter(private val ctx: Context) {
                 ).build()
 
             val effects = mutableListOf<Effect>()
-            val vf = (9f / 16f) / (videoW.toFloat() / videoH.toFloat())
-            if (vf < 0.999f) {
+            val target = 9f / 16f
+            val srcAspect = videoW.toFloat() / videoH.toFloat()
+            var croppedH = videoH
+            if (srcAspect > target + 0.001f) {
+                val vf = target / srcAspect
                 val cx = -1f + vf + (2f - 2f * vf) * cropPos.coerceIn(0f, 1f)
                 effects.add(Crop(cx - vf, cx + vf, -1f, 1f))
+            } else if (srcAspect < target - 0.001f) {
+                val vfv = srcAspect / target
+                effects.add(Crop(-1f, 1f, -vfv, vfv))
+                croppedH = (videoW * 16f / 9f).toInt()
             }
-            effects.add(Presentation.createForHeight(1920))
+            var outH = if (keepOriginal) minOf(croppedH, 2160) else 1920
+            outH = outH / 2 * 2
+            val outW = (outH * 9 / 16) / 2 * 2
+            effects.add(Presentation.createForHeight(outH))
+            val bitrate = (outW.toLong() * outH * 30L / 5L).coerceIn(2_000_000L, 25_000_000L).toInt()
+            val encoderFactory = DefaultEncoderFactory.Builder(ctx)
+                .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(bitrate).build())
+                .build()
 
             val edited = EditedMediaItem.Builder(media)
                 .setEffects(Effects(emptyList(), effects))
@@ -60,6 +77,7 @@ class Exporter(private val ctx: Context) {
             val outFile = File(ctx.cacheDir, "reel_${stamp}_$i.mp4")
 
             val transformer = Transformer.Builder(ctx)
+                .setEncoderFactory(encoderFactory)
                 .setVideoMimeType(MimeTypes.VIDEO_H264)
                 .addListener(object : Transformer.Listener {
                     override fun onCompleted(composition: Composition, exportResult: ExportResult) {

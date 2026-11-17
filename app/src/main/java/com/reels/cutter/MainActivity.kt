@@ -44,6 +44,8 @@ class MainActivity : ComponentActivity() {
     private val moments = mutableListOf<Moment>()
     private val exported = mutableListOf<Uri>()
     private var lengthSec = 30
+    private var preRatio = 0.4f
+    private var keepOriginal = true
 
     private lateinit var fileLabel: TextView
     private lateinit var status: TextView
@@ -126,6 +128,37 @@ class MainActivity : ComponentActivity() {
         root.addView(label("موضع الاقتصاص الأفقي (يسار ← يمين)", 15f, true))
         cropBar = SeekBar(this).apply { max = 100; progress = 50 }
         root.addView(cropBar)
+
+        root.addView(label("جودة الإخراج", 15f, true))
+        val qg = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        qg.addView(RadioButton(this).apply {
+            text = "أصلية (بدون تكبير، أفضل وضوح)"
+            id = View.generateViewId()
+            isChecked = true
+            setOnClickListener { keepOriginal = true }
+        })
+        qg.addView(RadioButton(this).apply {
+            text = "1080x1920 (تكبير للدقة القياسية)"
+            id = View.generateViewId()
+            setOnClickListener { keepOriginal = false }
+        })
+        root.addView(qg)
+
+        val preLabel = label("بداية المقطع قبل اللحظة: 40%", 15f, true)
+        root.addView(preLabel)
+        val preBar = SeekBar(this).apply {
+            max = 60
+            progress = 30
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, u: Boolean) {
+                    preRatio = (10 + p) / 100f
+                    preLabel.text = "بداية المقطع قبل اللحظة: ${10 + p}%"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+        root.addView(preBar)
 
         // البحث بالنص على الشاشة
         root.addView(label("بحث عن كلمات تظهر على الشاشة", 15f, true))
@@ -261,7 +294,7 @@ class MainActivity : ComponentActivity() {
 
     private fun preview(m: Moment) {
         val uri = videoUri ?: return
-        val (s, e) = Analyzer.window(m.timeMs, lengthSec * 1000L, durationMs)
+        val (s, e) = Analyzer.window(m.timeMs, lengthSec * 1000L, durationMs, preRatio)
         val v = VideoView(this)
         v.setVideoURI(uri)
         val h = Handler(Looper.getMainLooper())
@@ -280,12 +313,12 @@ class MainActivity : ComponentActivity() {
         val uri = videoUri ?: return
         val sel = moments.filter { it.selected }
         if (sel.isEmpty()) { Toast.makeText(this, "حدّد لحظة واحدة على الأقل", Toast.LENGTH_SHORT).show(); return }
-        val clips = sel.map { Analyzer.window(it.timeMs, lengthSec * 1000L, durationMs) }
+        val clips = sel.map { Analyzer.window(it.timeMs, lengthSec * 1000L, durationMs, preRatio) }
         exported.clear()
         setBusy(true)
         progress.progress = 0
         Exporter(this).export(
-            uri, clips, vw, vh, cropBar.progress / 100f,
+            uri, clips, vw, vh, cropBar.progress / 100f, keepOriginal,
             onClipStart = { i ->
                 status.text = "جاري تصدير الريلز ${i + 1} من ${clips.size}..."
                 progress.progress = i * 100 / clips.size

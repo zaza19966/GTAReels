@@ -59,8 +59,8 @@ object Analyzer {
     }
 
     /** نافذة المقطع حول اللحظة: 40% قبلها و60% بعدها */
-    fun window(timeMs: Long, lenMs: Long, durationMs: Long): Pair<Long, Long> {
-        var start = max(0L, timeMs - (lenMs * 0.4).toLong())
+    fun window(timeMs: Long, lenMs: Long, durationMs: Long, pre: Float = 0.4f): Pair<Long, Long> {
+        var start = max(0L, timeMs - (lenMs * pre).toLong())
         var end = min(durationMs, start + lenMs)
         if (end - start < lenMs) start = max(0L, end - lenMs)
         return start to end
